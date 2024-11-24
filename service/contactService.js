@@ -21,10 +21,11 @@ const identifyContact = async (req, res) => {
                  VALUES (?, ?, 'primary', NOW(), NOW())`,
                 [phoneNumber, email]
             );
+            const newContactId = insertResult.insertId;
 
             return res.status(200).json({
                 contact: {
-                    primaryContactId: insertResult.insertId,
+                    primaryContactId: newContactId,
                     emails: email ? [email] : [],
                     phoneNumbers: phoneNumber ? [phoneNumber] : [],
                     secondaryContactIds: [],
@@ -32,8 +33,8 @@ const identifyContact = async (req, res) => {
             });
         }
 
-        //Determining the primary contact with createdAt 
-        const primaryContact = contacts.find(c => c.linkPrecedence === 'primary') 
+        //Determine the primary contact with createdAt 
+        const primaryContact = contacts.find(c => c.linkPrecedence === 'primary')
             || contacts.reduce((oldest, current) =>
                 (new Date(oldest.createdAt) < new Date(current.createdAt) ? oldest : current)
             );
@@ -45,12 +46,10 @@ const identifyContact = async (req, res) => {
             [primaryContact.id, primaryContact.id]
         );
 
-        const allLinkedContacts = new Map();
-        [...contacts, ...linkedContacts].forEach(contact => {
-            allLinkedContacts.set(contact.id, contact);
-        });
+        const allLinkedContacts = [...contacts, ...linkedContacts];
 
-        const secondaryContactIds = Array.from(allLinkedContacts.values())
+        // Update/link secondary contacts to related primary contact
+        const secondaryContactIds = allLinkedContacts
             .filter(contact => contact.id !== primaryContact.id && contact.linkPrecedence === 'primary')
             .map(contact => contact.id);
 
@@ -62,8 +61,11 @@ const identifyContact = async (req, res) => {
                  WHERE id IN (${placeholders})`,
                 [primaryContact.id, ...secondaryContactIds]
             );
-            // if new user hits with existing secondary contact details
-            // Update all other secondary contacts' `linkedId` to point to the new primary
+        }
+        // if new user hits with existing secondary contact details
+        //Update all other secondary contacts' `linkedId` to point to the new primary
+        if (secondaryContactIds.length > 0) {
+            const placeholders = secondaryContactIds.map(() => '?').join(',');
             const [additionalLinkedContacts] = await db.execute(
                 `SELECT * FROM Contact
                  WHERE linkedId IN (${placeholders}) AND deletedAt IS NULL`,
@@ -85,15 +87,11 @@ const identifyContact = async (req, res) => {
         //Consolidate/Merging data
         const consolidatedContact = {
             primaryContactId: primaryContact.id,
-            emails: Array.from(new Set([...allLinkedContacts.values()]
-                .map(contact => contact.email)
-                .filter(Boolean))),
-            phoneNumbers: Array.from(new Set([...allLinkedContacts.values()]
-                .map(contact => contact.phoneNumber)
-                .filter(Boolean))),
-            secondaryContactIds: Array.from(new Set([...allLinkedContacts.values()]
+            emails: [...new Set(allLinkedContacts.map(contact => contact.email).filter(Boolean))],
+            phoneNumbers: [...new Set(allLinkedContacts.map(contact => contact.phoneNumber).filter(Boolean))],
+            secondaryContactIds: [...new Set(allLinkedContacts
                 .filter(contact => contact.id !== primaryContact.id)
-                .map(contact => contact.id))),
+                .map(contact => contact.id))],
         };
 
         return res.status(200).json({ contact: consolidatedContact });
