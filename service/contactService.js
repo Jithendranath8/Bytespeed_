@@ -8,20 +8,19 @@ const identifyContact = async (req, res) => {
     }
 
     try {
-        // Step 1: Find matching contacts
+        //Here we Find matching contacts
         const [contacts] = await db.execute(
             'SELECT * FROM Contact WHERE (email = ? OR phoneNumber = ?) AND deletedAt IS NULL',
             [email, phoneNumber]
         );
 
         if (contacts.length === 0) {
-            // No matches found, create a new primary contact
+            // IF No matches found, create a new primary contact
             const [insertResult] = await db.execute(
                 `INSERT INTO Contact (phoneNumber, email, linkPrecedence, createdAt, updatedAt) 
                  VALUES (?, ?, 'primary', NOW(), NOW())`,
                 [phoneNumber, email]
             );
-
             const newContactId = insertResult.insertId;
 
             return res.status(200).json({
@@ -34,14 +33,13 @@ const identifyContact = async (req, res) => {
             });
         }
 
-        // Step 2: Determine the primary contact
-        const primaryContact =
-            contacts.find(c => c.linkPrecedence === 'primary') ||
-            contacts.reduce((oldest, current) =>
-                new Date(oldest.createdAt) < new Date(current.createdAt) ? oldest : current
+        //Determine the primary contact with createdAt 
+        const primaryContact = contacts.find(c => c.linkPrecedence === 'primary')
+            || contacts.reduce((oldest, current) =>
+                (new Date(oldest.createdAt) < new Date(current.createdAt) ? oldest : current)
             );
 
-        // Step 3: Fetch all linked contacts
+        //Fetching all linked contacts
         const [linkedContacts] = await db.execute(
             `SELECT * FROM Contact 
              WHERE (linkedId = ? OR id = ?) AND deletedAt IS NULL`,
@@ -50,7 +48,7 @@ const identifyContact = async (req, res) => {
 
         const allLinkedContacts = [...contacts, ...linkedContacts];
 
-        // Step 4: Update/link secondary contacts
+        // Update/link secondary contacts to related primary contact
         const secondaryContactIds = allLinkedContacts
             .filter(contact => contact.id !== primaryContact.id && contact.linkPrecedence === 'primary')
             .map(contact => contact.id);
@@ -64,21 +62,34 @@ const identifyContact = async (req, res) => {
                 [primaryContact.id, ...secondaryContactIds]
             );
         }
+        // if new user hits with existing secondary contact details
+        //Update all other secondary contacts' `linkedId` to point to the new primary
+        if (secondaryContactIds.length > 0) {
+            const placeholders = secondaryContactIds.map(() => '?').join(',');
+            const [additionalLinkedContacts] = await db.execute(
+                `SELECT * FROM Contact
+                 WHERE linkedId IN (${placeholders}) AND deletedAt IS NULL`,
+                secondaryContactIds
+            );
 
-        // Step 5: Fetch additional secondary contacts
-        const [additionalLinkedContacts] = await db.execute(
-            `SELECT * FROM Contact WHERE linkedId = ? AND deletedAt IS NULL`,
-            [primaryContact.id]
-        );
+            const additionalContactIds = additionalLinkedContacts.map(c => c.id);
+            if (additionalContactIds.length > 0) {
+                const additionalPlaceholders = additionalContactIds.map(() => '?').join(',');
+                await db.execute(
+                    `UPDATE Contact 
+                     SET linkedId = ?, updatedAt = NOW() 
+                     WHERE id IN (${additionalPlaceholders})`,
+                    [primaryContact.id, ...additionalContactIds]
+                );
+            }
+        }
 
-        const consolidatedContacts = [...allLinkedContacts, ...additionalLinkedContacts];
-
-        // Step 6: Consolidate data
+        //Consolidate/Merging data
         const consolidatedContact = {
             primaryContactId: primaryContact.id,
-            emails: [...new Set(consolidatedContacts.map(contact => contact.email).filter(Boolean))],
-            phoneNumbers: [...new Set(consolidatedContacts.map(contact => contact.phoneNumber).filter(Boolean))],
-            secondaryContactIds: [...new Set(consolidatedContacts
+            emails: [...new Set(allLinkedContacts.map(contact => contact.email).filter(Boolean))],
+            phoneNumbers: [...new Set(allLinkedContacts.map(contact => contact.phoneNumber).filter(Boolean))],
+            secondaryContactIds: [...new Set(allLinkedContacts
                 .filter(contact => contact.id !== primaryContact.id)
                 .map(contact => contact.id))],
         };
