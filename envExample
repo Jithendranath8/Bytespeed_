@@ -1,0 +1,7 @@
+DATABASE_URL = "Your database url"
+DB_HOST = "Your db HOST name"
+DB_PORT = your port
+DB_USER = "Your db username"
+DB_PASSWORD = "Your db password"
+DB_NAME = "Your db name"
+SSL_MODE = "REQUIRED"

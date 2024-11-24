@@ -9,7 +9,10 @@ const app = express();
 app.use(bodyParser.json());
 
 // Routes
-app.use('/', contactRoute);
+app.get('/',()=>{
+    console.log('Hello from Backend');
+})
+app.use('/api', contactRoute);
 
 // Error Handling Middleware
 app.use((err, req, res, next) => {
